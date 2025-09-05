@@ -5,7 +5,7 @@
 ---@field current number
 ---@field line number
 ---@field tokens Token[]
----@field cases TokenType[]
+---@field cases table<string, TokenType | function>
 local Scanner = {}
 
 local Token = require "Token"
@@ -15,7 +15,7 @@ local TokenType = require "TokenType"
 ---@param source string
 ---@param reportError fun(line: number, message: string): nil
 function Scanner:new(source, reportError)
-  local instance = {
+  local this = {
     source = source,
     reportError = reportError,
 
@@ -23,23 +23,50 @@ function Scanner:new(source, reportError)
     current = 1,
     line = 1,
     tokens = {},
-
-    cases = {
-      ["("] = TokenType.LEFT_PAREN,
-      [")"] = TokenType.RIGHT_PAREN,
-      ["{"] = TokenType.LEFT_BRACE,
-      ["}"] = TokenType.RIGHT_BRACE,
-      [","] = TokenType.COMMA,
-      ["."] = TokenType.DOT,
-      ["-"] = TokenType.MINUS,
-      ["+"] = TokenType.PLUS,
-      [";"] = TokenType.SEMICOLON,
-      ["*"] = TokenType.STAR,
-    },
   }
-  setmetatable(instance, self)
+
+  this.cases = {
+    ["("] = TokenType.LEFT_PAREN,
+    [")"] = TokenType.RIGHT_PAREN,
+    ["{"] = TokenType.LEFT_BRACE,
+    ["}"] = TokenType.RIGHT_BRACE,
+    [","] = TokenType.COMMA,
+    ["."] = TokenType.DOT,
+    ["-"] = TokenType.MINUS,
+    ["+"] = TokenType.PLUS,
+    [";"] = TokenType.SEMICOLON,
+    ["*"] = TokenType.STAR,
+    ["!"] = function() this:addToken(this:match("=") and TokenType.BANG_EQUAL or TokenType.BANG) end,
+    ["="] = function() this:addToken(this:match("=") and TokenType.EQUAL_EQUAL or TokenType.EQUAL) end,
+    ["<"] = function() this:addToken(this:match("=") and TokenType.LESS_EQUAL or TokenType.LESS) end,
+    [">"] = function() this:addToken(this:match("=") and TokenType.GREATER_EQUAL or TokenType.GREATER) end,
+    ["/"] = function()
+      if this:match('/') then
+        while this:peek() ~= "\n" and not this:isAtEnd() do this:advance() end
+      else
+        this:addToken(TokenType.SLASH)
+      end
+    end,
+    [" "] = function() end,
+    ["\r"] = function() end,
+    ["\t"] = function() end,
+    ["\n"] = function() this.line = this.line + 1 end,
+    ['"'] = function() this:handleString() end,
+  }
+
+  setmetatable(this.cases, {
+    __index = function(_t, key)
+      if this:isDigit(key) then
+        return function() this:handleNumber() end
+      else
+        this.reportError(this.line, "Unexpected character: " .. key)
+      end
+    end
+  })
+
+  setmetatable(this, self)
   self.__index = self
-  return instance
+  return this
 end
 
 
@@ -55,6 +82,33 @@ function Scanner:advance()
 end
 
 
+---@param expected string
+function Scanner:match(expected)
+  if self:isAtEnd() or self.source[self.current] ~= expected then return false end
+  self.current = self.current + 1
+  return true
+end
+
+
+function Scanner:peek()
+  if self:isAtEnd() then return "\0"
+  else return self.source[self.current]
+  end
+end
+
+
+function Scanner:peekNext()
+  if self.current + 1 >= #self.source then return "\0" end
+  return self.source[self.current + 1]
+end
+
+
+---@param key string
+function Scanner:isDigit(key)
+  return key:match("^%d$")
+end
+
+
 function Scanner:addToken(type, literal)
   local text = string.sub(self.source, self.start, self.current)
   self.tokens[#self.tokens+1] = Token:new(type, text, literal, self.line)
@@ -65,10 +119,12 @@ function Scanner:scanToken()
   ---@type string
   local c = self:advance()
   local case = self.cases[c]
-  if case then
-    self:addToken(case)
-  else
+  if case == nil then
     self.reportError(self.line, "Unexpected character: " .. c)
+  elseif type(case) == "function" then
+    case()
+  else
+    self:addToken(case)
   end
 end
 
@@ -80,6 +136,33 @@ function Scanner:scanTokens()
   end
   self.tokens[#self.tokens+1] = Token:new(TokenType.EOF, "", nil, self.line)
   return self.tokens
+end
+
+
+function Scanner:handleString()
+  while self:peek() ~= '"' and not self:isAtEnd() do
+    if self:peek() == "\n" then
+      self.line = self.line + 1
+    end
+    self:advance()
+  end
+  if self:isAtEnd() then
+    self.reportError(self.line, "Unterminated string.")
+    return
+  end
+  self:advance()
+  local value = string.sub(self.source, self.start + 1, self.current - 1)
+  self:addToken(TokenType.STRING, value)
+end
+
+
+function Scanner:handleNumber()
+  while self:isDigit(self:peek()) do self:advance() end
+  if self:peek() == '.' and self:isDigit(self:peekNext()) then
+    self:advance()
+    while self:isDigit(self:peek()) do self:advance() end
+  end
+  self:addToken(TokenType.NUMBER, tonumber(string.sub(self.source, self.start, self.current)))
 end
 
 
