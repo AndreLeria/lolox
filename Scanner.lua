@@ -6,6 +6,7 @@
 ---@field line number
 ---@field tokens Token[]
 ---@field cases table<string, TokenType | function>
+---@field keywords table<string, TokenType>
 local Scanner = {}
 
 local Token = require "Token"
@@ -58,11 +59,32 @@ function Scanner:new(source, reportError)
     __index = function(_t, key)
       if this:isDigit(key) then
         return function() this:handleNumber() end
+      elseif this:isAlpha(key) then
+        return function() this:handleIdentifier() end
       else
         this.reportError(this.line, "Unexpected character: " .. key)
       end
     end
   })
+
+  this.keywords = {
+    ["and"] = TokenType.AND,
+    ["class"] = TokenType.CLASS,
+    ["else"] = TokenType.ELSE,
+    ["false"] = TokenType.FALSE,
+    ["for"] = TokenType.FOR,
+    ["fun"] = TokenType.FUN,
+    ["if"] = TokenType.IF,
+    ["nil"] = TokenType.NIL,
+    ["or"] = TokenType.OR,
+    ["print"] = TokenType.PRINT,
+    ["return"] = TokenType.RETURN,
+    ["super"] = TokenType.SUPER,
+    ["this"] = TokenType.THIS,
+    ["true"] = TokenType.TRUE,
+    ["var"] = TokenType.VAR,
+    ["while"] = TokenType.WHILE,
+  }
 
   setmetatable(this, self)
   self.__index = self
@@ -106,6 +128,18 @@ end
 ---@param key string
 function Scanner:isDigit(key)
   return key:match("^%d$")
+end
+
+
+---@param c string
+function Scanner:isAlpha(c)
+  return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_'
+end
+
+
+---@param c string
+function Scanner:isAlphaNumeric(c)
+  return self:isAlpha(c) or self:isDigit(c)
 end
 
 
@@ -163,6 +197,14 @@ function Scanner:handleNumber()
     while self:isDigit(self:peek()) do self:advance() end
   end
   self:addToken(TokenType.NUMBER, tonumber(string.sub(self.source, self.start, self.current)))
+end
+
+
+function Scanner:handleIdentifier()
+  while self:isAlphaNumeric(self:peek()) do self:advance() end
+  local text = string.sub(self.source, self.start, self.current)
+  local type = self.keywords[text] or TokenType.IDENTIFIER
+  self:addToken(type)
 end
 
 
